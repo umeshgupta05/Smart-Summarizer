@@ -3,6 +3,7 @@ from ibm_watson import SpeechToTextV1
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from transformers import pipeline
 import yt_dlp
+import os
 
 app = Flask(__name__)
 
