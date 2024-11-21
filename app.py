@@ -1,18 +1,22 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from ibm_watson import SpeechToTextV1
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from transformers import pipeline
 import yt_dlp
 import os
+import shutil
+from flask_cors import CORS  # For handling CORS
 
 app = Flask(__name__)
-@app.route('/')
-def home():
-    return render_template('index.html') 
+CORS(app)  # Enable CORS for all routes
 
 # IBM Watson API credentials (inbuilt)
 IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
 IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a189c18-1d14-4dac-bb14-a634099f9926"
+
+@app.route('/')
+def home():
+    return render_template('index.html')  # Ensure you have an 'index.html' in your templates folder
 
 # Step 1: Download YouTube Video
 def download_youtube_video(url, output_path="downloaded_video.webm"):
@@ -74,6 +78,10 @@ def process_youtube_video():
 
         # Step 3: Summarize the text
         summary = summarize_text(transcript)
+
+        # Clean up the downloaded audio file
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
 
         # Return the summary as a JSON response
         return jsonify({
