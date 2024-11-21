@@ -6,6 +6,9 @@ import yt_dlp
 import os
 
 app = Flask(__name__)
+@app.route('/')
+def home():
+    return render_template('index.html') 
 
 # IBM Watson API credentials (inbuilt)
 IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
