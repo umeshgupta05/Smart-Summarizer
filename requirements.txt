@@ -7,3 +7,4 @@ requests==2.31.0
 transformers==4.33.3
 ibm-watson==6.1.0
 yt-dlp
+flask_cors
