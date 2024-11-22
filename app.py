@@ -1,7 +1,9 @@
 from flask import Flask, request, jsonify, render_template
 from ibm_watson import SpeechToTextV1
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from nltk.tokenize import sent_tokenize, word_tokenize
+from collections import Counter
+import heapq
 import yt_dlp
 import PyPDF2
 import os
@@ -60,13 +62,22 @@ def audio_to_text_ibm(audio_path):
     except Exception as e:
         raise Exception(f"Error during transcription: {str(e)}")
 
-# Step 3: Summarize Text using T5
 def summarize_text(text):
     try:
-        inputs = tokenizer.encode("summarize: " + text, return_tensors="pt", max_length=1024, truncation=True)
-        summary_ids = model.generate(inputs, max_length=150, min_length=30, length_penalty=2.0, num_beams=4, early_stopping=True)
-        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-        return summary
+        sentences = sent_tokenize(text)
+        words = word_tokenize(text.lower())
+        word_frequencies = Counter(words)
+
+        # Calculate scores for sentences
+        sentence_scores = {}
+        for sentence in sentences:
+            for word in word_tokenize(sentence.lower()):
+                if word in word_frequencies:
+                    sentence_scores[sentence] = sentence_scores.get(sentence, 0) + word_frequencies[word]
+
+        # Extract top 3 sentences
+        summary_sentences = heapq.nlargest(3, sentence_scores, key=sentence_scores.get)
+        return " ".join(summary_sentences)
     except Exception as e:
         raise Exception(f"Error during summarization: {str(e)}")
 
