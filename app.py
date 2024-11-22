@@ -1,65 +1,83 @@
 from flask import Flask, request, jsonify, render_template
-from ibm_watson import SpeechToTextV1
-from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
-from transformers import pipeline
+import whisper
+from transformers import T5ForConditionalGeneration, T5Tokenizer
 import yt_dlp
 import os
 import shutil
+
 from flask_cors import CORS  # For handling CORS
 
 app = Flask(__name__)
+
 CORS(app)  # Enable CORS for all routes
 
-# IBM Watson API credentials (inbuilt)
-IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
-IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a189c18-1d14-4dac-bb14-a634099f9926"
-
 @app.route('/')
+
 def home():
     return render_template('index.html')  # Ensure you have an 'index.html' in your templates folder
 
-def download_youtube_video(url, output_path="/tmp/downloaded_video.webm"):
+# Step 1: Download YouTube Video
+def download_youtube_video(url, output_path="downloaded_video.webm"):
     try:
         ydl_opts = {
-            'outtmpl': output_path,  # Specify temporary download location
+            'outtmpl': output_path,  # Specify download location
             'format': 'bestaudio/best',  # Download the best audio-only stream
-            'cookiefile': 'cookies.txt',  # Pass the cookies file for authentication
+            'noplaylist': True,  # Ensure only the specified video is downloaded
+            'quiet': True,  # Suppress the output to make it cleaner
         }
+
+        # If authentication is needed, you can specify cookies or credentials directly
+        # ydl_opts['cookiefile'] = 'cookies.txt'  # Use a cookies file if needed for access
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
+
         return output_path
     except Exception as e:
         raise Exception(f"Error downloading video: {str(e)}")
 
-# Step 2: Transcribe Audio to Text using IBM Watson
-def audio_to_text_ibm(audio_path):
+# Step 2: Transcribe Audio to Text using Whisper
+def audio_to_text_whisper(audio_path):
     try:
-        authenticator = IAMAuthenticator(IBM_API_KEY)
-        speech_to_text = SpeechToTextV1(authenticator=authenticator)
-        speech_to_text.set_service_url(IBM_URL)
-
-        with open(audio_path, "rb") as audio_file:
-            response = speech_to_text.recognize(
-                audio=audio_file,
-                content_type="audio/webm",
-                model="en-US_BroadbandModel"
-            ).get_result()
-
-        transcript = " ".join(result['alternatives'][0]['transcript'] for result in response['results'])
+        # Load the Whisper model (use 'base', 'small', 'medium', or 'large' depending on your system's capabilities)
+        model = whisper.load_model("base")  # Replace "base" with a larger model if needed
+        
+        # Transcribe the audio file
+        result = model.transcribe(audio_path)
+        
+        # Extract the transcript from the result
+        transcript = result['text']
         return transcript
     except Exception as e:
-        raise Exception(f"Error during transcription: {str(e)}")
+        raise Exception(f"Error during transcription with Whisper: {str(e)}")
 
-# Step 3: Summarize the Text
+# Step 3: Summarize the Text using T5
 def summarize_text(text):
     try:
-        summarizer = pipeline("summarization")
-        summary = summarizer(text, max_length=900, min_length=30, do_sample=False)
-        return summary[0]["summary_text"]
+        # Load the T5 model and tokenizer
+        model_name = "t5-base"  # You can also use "t5-base" or "t5-large" for better results
+        tokenizer = T5Tokenizer.from_pretrained(model_name)
+        model = T5ForConditionalGeneration.from_pretrained(model_name)
+
+        # Prepare the input text for summarization
+        input_text = f"summarize: {text}"
+        inputs = tokenizer.encode(input_text, return_tensors="pt", max_length=512, truncation=True)
+
+        # Generate the summary
+        summary_ids = model.generate(
+            inputs, 
+            max_length=150,  # Adjust the maximum length of the summary
+            min_length=30,   # Adjust the minimum length of the summary
+            length_penalty=2.0,
+            num_beams=4,
+            early_stopping=True
+        )
+        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+
+        return summary
     except Exception as e:
         raise Exception(f"Error during summarization: {str(e)}")
 
-# Flask route for processing the YouTube video
 @app.route('/process', methods=['POST'])
 def process_youtube_video():
     try:
@@ -74,14 +92,10 @@ def process_youtube_video():
         audio_path = download_youtube_video(youtube_url)
 
         # Step 2: Convert audio to text
-        transcript = audio_to_text_ibm(audio_path)
+        transcript = audio_to_text_whisper(audio_path)
 
         # Step 3: Summarize the text
         summary = summarize_text(transcript)
-
-        # Clean up the downloaded audio file
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
 
         # Return the summary as a JSON response
         return jsonify({
