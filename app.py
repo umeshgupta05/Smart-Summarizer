@@ -1,10 +1,6 @@
 from flask import Flask, request, jsonify, render_template
-import whisper
-from transformers import T5ForConditionalGeneration, T5Tokenizer
 import yt_dlp
 import os
-import shutil
-
 from flask_cors import CORS  # For handling CORS
 
 app = Flask(__name__)
@@ -12,48 +8,48 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 @app.route('/')
-
 def home():
     return render_template('index.html')  # Ensure you have an 'index.html' in your templates folder
 
-# Step 1: Download YouTube Video
-def download_youtube_video(url, output_path="downloaded_video.webm"):
+# Step 1: Extract YouTube Captions (as string)
+def get_youtube_captions(url, language='en'):
     try:
         ydl_opts = {
-            'outtmpl': output_path,  # Specify download location
+            'quiet': True,  # Suppress the output to make it cleaner
             'format': 'bestaudio/best',  # Download the best audio-only stream
             'noplaylist': True,  # Ensure only the specified video is downloaded
-            'quiet': True,  # Suppress the output to make it cleaner
+            'writesubtitles': True,  # Download subtitles (captions)
+            'subtitleslangs': [language],  # Language of the subtitles (e.g., 'en' for English)
+            'writeautomaticsub': True,  # Include automatic captions if available
         }
 
-        # If authentication is needed, you can specify cookies or credentials directly
-        # ydl_opts['cookiefile'] = 'cookies.txt'  # Use a cookies file if needed for access
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            result = ydl.extract_info(url, download=False)
+            subtitle_file = None
+            # Check if captions are available and select the appropriate subtitle file
+            if 'subtitles' in result and language in result['subtitles']:
+                subtitle_file = result['subtitles'][language][0]['url']
+            if not subtitle_file:
+                raise Exception(f"No subtitles available for this video in {language}.")
 
-        return output_path
+            # Fetch the subtitle file content directly
+            import requests
+            response = requests.get(subtitle_file)
+            if response.status_code == 200:
+                captions = response.text
+                # Clean up the VTT format to extract text only
+                cleaned_text = ' '.join(line.strip() for line in captions.split('\n') if not line.startswith('NOTE') and line.strip())
+                return cleaned_text
+            else:
+                raise Exception(f"Failed to fetch captions, status code: {response.status_code}")
     except Exception as e:
-        raise Exception(f"Error downloading video: {str(e)}")
+        raise Exception(f"Error extracting captions: {str(e)}")
 
-# Step 2: Transcribe Audio to Text using Whisper
-def audio_to_text_whisper(audio_path):
-    try:
-        # Load the Whisper model (use 'base', 'small', 'medium', or 'large' depending on your system's capabilities)
-        model = whisper.load_model("base")  # Replace "base" with a larger model if needed
-        
-        # Transcribe the audio file
-        result = model.transcribe(audio_path)
-        
-        # Extract the transcript from the result
-        transcript = result['text']
-        return transcript
-    except Exception as e:
-        raise Exception(f"Error during transcription with Whisper: {str(e)}")
-
-# Step 3: Summarize the Text using T5
+# Step 2: Summarize the Text using T5
 def summarize_text(text):
     try:
+        from transformers import T5ForConditionalGeneration, T5Tokenizer
+        
         # Load the T5 model and tokenizer
         model_name = "t5-base"  # You can also use "t5-base" or "t5-large" for better results
         tokenizer = T5Tokenizer.from_pretrained(model_name)
@@ -88,13 +84,10 @@ def process_youtube_video():
         if not youtube_url:
             return jsonify({"error": "YouTube URL is required"}), 400
 
-        # Step 1: Download YouTube video
-        audio_path = download_youtube_video(youtube_url)
+        # Step 1: Extract YouTube video captions directly (as string)
+        transcript = get_youtube_captions(youtube_url)
 
-        # Step 2: Convert audio to text
-        transcript = audio_to_text_whisper(audio_path)
-
-        # Step 3: Summarize the text
+        # Step 2: Summarize the text
         summary = summarize_text(transcript)
 
         # Return the summary as a JSON response
