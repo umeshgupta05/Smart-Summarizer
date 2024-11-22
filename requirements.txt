@@ -10,3 +10,4 @@ ibm_watson
 werkzeug
 PyPDF2
 nltk
+pydub
