@@ -11,3 +11,4 @@ ibm_watson
 werkzeug
 PyPDF2
 sentencepiece
+torch
