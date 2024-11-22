@@ -10,38 +10,34 @@ import PyPDF2
 import os
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
+from pydub import AudioSegment
+import logging
 
 app = Flask(__name__)
 CORS(app)
+logging.basicConfig(level=logging.DEBUG)
 
 nltk.download("punkt_tab")
-# IBM Watson API credentials
+
 IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
 IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a189c18-1d14-4dac-bb14-a634099f9926"
 
 ALLOWED_EXTENSIONS = {'pdf', 'webm', 'mp4', 'wav'}
 
+# Function to check allowed file extensions
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/')
-def home():
-    return render_template('index.html')  # Ensure you have an 'index.html' in your templates folder
-
-# Step 1: Download YouTube Video
-def download_youtube_video(url, output_path="downloaded_video.webm"):
+# Convert audio files to WAV format
+def convert_to_wav(input_path, output_path="converted_audio.wav"):
     try:
-        ydl_opts = {
-            'outtmpl': output_path,
-            'format': 'bestaudio/best',
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        audio = AudioSegment.from_file(input_path)
+        audio.export(output_path, format="wav")
         return output_path
     except Exception as e:
-        raise Exception(f"Error downloading video: {str(e)}")
+        raise Exception(f"Error converting audio file to WAV: {str(e)}")
 
-# Step 2: Transcribe Audio using IBM Watson
+# IBM Watson transcription
 def audio_to_text_ibm(audio_path):
     try:
         authenticator = IAMAuthenticator(IBM_API_KEY)
@@ -51,15 +47,16 @@ def audio_to_text_ibm(audio_path):
         with open(audio_path, "rb") as audio_file:
             response = speech_to_text.recognize(
                 audio=audio_file,
-                content_type="audio/webm",  # Adjust format if using mp4
+                content_type="audio/wav",  # Use 'audio/webm' for webm files
                 model="en-US_BroadbandModel"
             ).get_result()
 
         transcript = " ".join(result['alternatives'][0]['transcript'] for result in response['results'])
         return transcript
     except Exception as e:
-        raise Exception(f"Error during transcription: {str(e)}")
+        raise Exception(f"IBM Watson Transcription Error: {str(e)}")
 
+# Text summarization
 def summarize_text(text):
     try:
         sentences = sent_tokenize(text)
@@ -79,7 +76,7 @@ def summarize_text(text):
     except Exception as e:
         raise Exception(f"Error during summarization: {str(e)}")
 
-# Process PDF to Text
+# PDF to text
 def pdf_to_text(pdf_path):
     try:
         text = ""
@@ -91,15 +88,36 @@ def pdf_to_text(pdf_path):
     except Exception as e:
         raise Exception(f"Error reading PDF: {str(e)}")
 
+# Download YouTube video
+def download_youtube_video(url, output_path="downloaded_video.webm"):
+    try:
+        ydl_opts = {
+            'outtmpl': output_path,
+            'format': 'bestaudio/best',
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return output_path
+    except Exception as e:
+        raise Exception(f"Error downloading video: {str(e)}")
+
+@app.route('/')
+def home():
+    return render_template('index.html')  # Ensure 'index.html' exists in the templates folder
+
 @app.route('/process', methods=['POST'])
 def process_input():
     try:
-        # Check if the request has a file
+        uploads_dir = os.path.join(os.getcwd(), "uploads")
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir)  # Create uploads directory if not exists
+
+        # Handle file upload
         if 'file' in request.files:
             file = request.files['file']
             if file and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                file_path = os.path.join("uploads", filename)
+                file_path = os.path.join(uploads_dir, filename)
                 file.save(file_path)
 
                 if filename.endswith(".pdf"):
@@ -107,30 +125,33 @@ def process_input():
                     text = pdf_to_text(file_path)
                     summary = summarize_text(text)
                 else:
-                    # Process Video
-                    transcript = audio_to_text_ibm(file_path)
+                    # Convert to WAV for audio transcription
+                    wav_path = convert_to_wav(file_path)
+                    transcript = audio_to_text_ibm(wav_path)
                     summary = summarize_text(transcript)
-                
-                os.remove(file_path)  # Cleanup
+
+                os.remove(file_path)  # Cleanup original file
                 return jsonify({"summary": summary})
 
-        # Check if a YouTube URL is provided
+        # Handle YouTube URL
         data = request.get_json()
         youtube_url = data.get('youtube_url')
         if youtube_url:
             audio_path = download_youtube_video(youtube_url)
-            transcript = audio_to_text_ibm(audio_path)
+            wav_path = convert_to_wav(audio_path)
+            transcript = audio_to_text_ibm(wav_path)
             summary = summarize_text(transcript)
-            os.remove(audio_path)  # Cleanup
+
+            os.remove(audio_path)  # Cleanup downloaded video
+            os.remove(wav_path)    # Cleanup converted audio
             return jsonify({"summary": summary})
 
         return jsonify({"error": "No valid input provided"}), 400
 
     except Exception as e:
+        app.logger.error(f"Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    if not os.path.exists("uploads"):
-        os.makedirs("uploads")  # Create upload directory if it doesn't exist
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
