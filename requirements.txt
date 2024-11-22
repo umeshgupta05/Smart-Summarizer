@@ -7,4 +7,6 @@ requests==2.31.0
 transformers==4.33.3
 yt-dlp
 flask_cors
-openai-whisper
+ibm_watson
+werkzeug
+PyPDF2
