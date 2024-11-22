@@ -17,10 +17,6 @@ CORS(app)
 IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
 IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a189c18-1d14-4dac-bb14-a634099f9926"
 
-model_name = "sshleifer/distilbart-cnn-12-6"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-# Allowed file extensions
 ALLOWED_EXTENSIONS = {'pdf', 'webm', 'mp4', 'wav'}
 
 def allowed_file(filename):
