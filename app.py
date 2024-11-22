@@ -18,12 +18,12 @@ IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a18
 def home():
     return render_template('index.html')  # Ensure you have an 'index.html' in your templates folder
 
-# Step 1: Download YouTube Video
-def download_youtube_video(url, output_path="downloaded_video.webm"):
+def download_youtube_video(url, output_path="/tmp/downloaded_video.webm"):
     try:
         ydl_opts = {
-            'outtmpl': output_path,  # Specify download location
+            'outtmpl': output_path,  # Specify temporary download location
             'format': 'bestaudio/best',  # Download the best audio-only stream
+            'cookiefile': 'cookies.txt',  # Pass the cookies file for authentication
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
