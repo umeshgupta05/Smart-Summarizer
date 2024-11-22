@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template
 from ibm_watson import SpeechToTextV1
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
-from transformers import T5ForConditionalGeneration, T5Tokenizer
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import yt_dlp
 import PyPDF2
 import os
@@ -15,11 +15,9 @@ CORS(app)
 IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
 IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a189c18-1d14-4dac-bb14-a634099f9926"
 
-# T5 Model Initialization
-t5_model_name = "t5-base"
-tokenizer = T5Tokenizer.from_pretrained(t5_model_name)
-model = T5ForConditionalGeneration.from_pretrained(t5_model_name)
-
+model_name = "sshleifer/distilbart-cnn-12-6"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {'pdf', 'webm', 'mp4', 'wav'}
 
@@ -65,17 +63,8 @@ def audio_to_text_ibm(audio_path):
 # Step 3: Summarize Text using T5
 def summarize_text(text):
     try:
-        input_text = f"summarize: {text}"
-        inputs = tokenizer.encode(input_text, return_tensors="pt", max_length=512, truncation=True)
-
-        summary_ids = model.generate(
-            inputs,
-            max_length=150,
-            min_length=30,
-            length_penalty=2.0,
-            num_beams=4,
-            early_stopping=True
-        )
+        inputs = tokenizer.encode("summarize: " + text, return_tensors="pt", max_length=1024, truncation=True)
+        summary_ids = model.generate(inputs, max_length=150, min_length=30, length_penalty=2.0, num_beams=4, early_stopping=True)
         summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
         return summary
     except Exception as e:
