@@ -8,4 +8,3 @@ transformers==4.33.3
 yt-dlp
 flask_cors
 whisper
-tempfile
