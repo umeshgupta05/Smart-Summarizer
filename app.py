@@ -31,7 +31,7 @@ def extract_audio_from_video(video_file):
 def audio_to_text_whisper(audio_path):
     try:
         # Load the Whisper model (use 'base', 'small', 'medium', or 'large' depending on your system's capabilities)
-        model = whisper.load_model("base")  # Replace "base" with a larger model if needed
+        model = whisper.load_model('large')  # Replace "base" with a larger model if needed
         
         # Transcribe the audio file
         result = model.transcribe(audio_path)
