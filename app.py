@@ -1,10 +1,7 @@
 from flask import Flask, request, jsonify, render_template
 from ibm_watson import SpeechToTextV1
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
-from nltk.tokenize import sent_tokenize, word_tokenize
-import nltk
-from collections import Counter
-import heapq
+from transformers import pipeline
 import yt_dlp
 import PyPDF2
 import os
@@ -17,8 +14,10 @@ app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.DEBUG)
 
-nltk.download("punkt_tab")
+# Initialize the summarization pipeline
+summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
+# IBM Watson API credentials
 IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
 IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a189c18-1d14-4dac-bb14-a634099f9926"
 
@@ -56,23 +55,11 @@ def audio_to_text_ibm(audio_path):
     except Exception as e:
         raise Exception(f"IBM Watson Transcription Error: {str(e)}")
 
-# Text summarization
+# Summarization using transformers
 def summarize_text(text):
     try:
-        sentences = sent_tokenize(text)
-        words = word_tokenize(text.lower())
-        word_frequencies = Counter(words)
-
-        # Calculate scores for sentences
-        sentence_scores = {}
-        for sentence in sentences:
-            for word in word_tokenize(sentence.lower()):
-                if word in word_frequencies:
-                    sentence_scores[sentence] = sentence_scores.get(sentence, 0) + word_frequencies[word]
-
-        # Extract top 3 sentences
-        summary_sentences = heapq.nlargest(3, sentence_scores, key=sentence_scores.get)
-        return " ".join(summary_sentences)
+        summary = summarizer(text, max_length=130, min_length=30, do_sample=False)
+        return summary[0]['summary_text']
     except Exception as e:
         raise Exception(f"Error during summarization: {str(e)}")
 
