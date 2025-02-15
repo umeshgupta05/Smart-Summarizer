@@ -12,8 +12,8 @@
     <!-- Header -->
     <header class="bg-blue-600 text-white shadow-md">
         <div class="container mx-auto py-6 px-4 text-center">
-            <h1 class="text-4xl font-bold">📄🎥 Text Summarizer</h1>
-            <p class="text-lg mt-2">Upload a file or provide a YouTube URL to summarize!</p>
+            <h1 class="text-4xl font-bold">📄 Text Summarizer</h1>
+            <p class="text-lg mt-2">Upload a file to summarize!</p>
         </div>
     </header>
 
@@ -21,16 +21,12 @@
     <main class="container mx-auto mt-10 px-4">
         <!-- File Upload -->
         <div class="bg-white shadow-md rounded-lg p-8">
-            <h2 class="text-2xl font-semibold text-gray-700 text-center">Upload File or Enter YouTube URL</h2>
+            <h2 class="text-2xl font-semibold text-gray-700 text-center">Upload a File</h2>
             <form id="summarizer-form" class="mt-6 space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Upload File</label>
                     <input type="file" id="file" name="file" accept=".pdf, .mp4, .webm" 
                         class="w-full mt-1 p-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">YouTube URL</label>
-                    <input type="url" id="youtube-url" class="w-full mt-1 p-3 border border-gray-300 rounded-lg" placeholder="Paste YouTube URL...">
                 </div>
                 <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg shadow-lg">
                     Summarize
@@ -52,14 +48,13 @@
 
                 let formData = new FormData();
                 let file = $("#file")[0].files[0];
-                let youtubeUrl = $("#youtube-url").val();
 
-                if (file) {
-                    formData.append("file", file);
+                if (!file) {
+                    alert("Please upload a file.");
+                    return;
                 }
-                if (youtubeUrl) {
-                    formData.append("youtube_url", youtubeUrl);
-                }
+
+                formData.append("file", file);
 
                 $("#result").hide();
                 $("#summary-text").html("");
