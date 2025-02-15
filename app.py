@@ -1,144 +1,87 @@
 from flask import Flask, request, jsonify, render_template
-from ibm_watson import SpeechToTextV1
-from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from transformers import pipeline
-import yt_dlp
-import PyPDF2
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.docstore.document import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import fitz  # PyMuPDF
 import os
-from werkzeug.utils import secure_filename
-from flask_cors import CORS
-from pydub import AudioSegment
-import logging
+import whisper
+from langdetect import detect
+from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
-CORS(app)
-logging.basicConfig(level=logging.DEBUG)
 
-# Initialize the summarization pipeline
+# Load models
 summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+speech_model = whisper.load_model("base")
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# IBM Watson API credentials
-IBM_API_KEY = "ZYk7GDnMl1DNKMT1UA3qutttI8-tEIAF0aCmGlAQTq6R"  # Replace with your IBM Watson API key
-IBM_URL = "https://api.au-syd.speech-to-text.watson.cloud.ibm.com/instances/2a189c18-1d14-4dac-bb14-a634099f9926"
+vector_store = None  # Global variable to store document embeddings
 
-ALLOWED_EXTENSIONS = {'pdf', 'webm', 'mp4', 'wav'}
+def extract_text_from_pdf(pdf_path):
+    doc = fitz.open(pdf_path)
+    return "\n".join([page.get_text("text") for page in doc])
 
-# Function to check allowed file extensions
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+def extract_text_from_video(video_path):
+    result = speech_model.transcribe(video_path)
+    return result["text"]
 
-# Convert audio files to WAV format
-def convert_to_wav(input_path, output_path="converted_audio.wav"):
-    try:
-        audio = AudioSegment.from_file(input_path)
-        audio.export(output_path, format="wav")
-        return output_path
-    except Exception as e:
-        raise Exception(f"Error converting audio file to WAV: {str(e)}")
-
-# IBM Watson transcription
-def audio_to_text_ibm(audio_path):
-    try:
-        authenticator = IAMAuthenticator(IBM_API_KEY)
-        speech_to_text = SpeechToTextV1(authenticator=authenticator)
-        speech_to_text.set_service_url(IBM_URL)
-
-        with open(audio_path, "rb") as audio_file:
-            response = speech_to_text.recognize(
-                audio=audio_file,
-                content_type="audio/wav",  # Use 'audio/webm' for webm files
-                model="en-US_BroadbandModel"
-            ).get_result()
-
-        transcript = " ".join(result['alternatives'][0]['transcript'] for result in response['results'])
-        return transcript
-    except Exception as e:
-        raise Exception(f"IBM Watson Transcription Error: {str(e)}")
-
-# Summarization using transformers
-def summarize_text(text):
-    try:
-        summary = summarizer(text, max_length=130, min_length=30, do_sample=False)
-        return summary[0]['summary_text']
-    except Exception as e:
-        raise Exception(f"Error during summarization: {str(e)}")
-
-# PDF to text
-def pdf_to_text(pdf_path):
-    try:
-        text = ""
-        with open(pdf_path, "rb") as file:
-            reader = PyPDF2.PdfReader(file)
-            for page in reader.pages:
-                text += page.extract_text()
-        return text
-    except Exception as e:
-        raise Exception(f"Error reading PDF: {str(e)}")
-
-# Download YouTube video
-def download_youtube_video(url, output_path="downloaded_video.webm"):
-    try:
-        ydl_opts = {
-            'outtmpl': output_path,
-            'format': 'bestaudio/best',
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        return output_path
-    except Exception as e:
-        raise Exception(f"Error downloading video: {str(e)}")
+def detect_and_translate(text):
+    lang = detect(text)
+    if lang != "en":
+        return GoogleTranslator(source=lang, target="en").translate(text)
+    return text
 
 @app.route('/')
 def home():
-    return render_template('index.html')  # Ensure 'index.html' exists in the templates folder
+    return render_template('index.html')
 
 @app.route('/process', methods=['POST'])
-def process_input():
-    try:
-        uploads_dir = os.path.join(os.getcwd(), "uploads")
-        if not os.path.exists(uploads_dir):
-            os.makedirs(uploads_dir)  # Create uploads directory if not exists
+def process_file():
+    global vector_store
 
-        # Handle file upload
-        if 'file' in request.files:
-            file = request.files['file']
-            if file and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
-                file_path = os.path.join(uploads_dir, filename)
-                file.save(file_path)
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
 
-                if filename.endswith(".pdf"):
-                    # Process PDF
-                    text = pdf_to_text(file_path)
-                    summary = summarize_text(text)
-                else:
-                    # Convert to WAV for audio transcription
-                    wav_path = convert_to_wav(file_path)
-                    transcript = audio_to_text_ibm(wav_path)
-                    summary = summarize_text(transcript)
+    file = request.files['file']
+    file_path = os.path.join("uploads", file.filename)
+    os.makedirs("uploads", exist_ok=True)
+    file.save(file_path)
 
-                os.remove(file_path)  # Cleanup original file
-                return jsonify({"summary": summary})
+    text = ""
+    if file.filename.endswith(".pdf"):
+        text = extract_text_from_pdf(file_path)
+    elif file.filename.endswith((".mp4", ".webm")):
+        text = extract_text_from_video(file_path)
+    
+    text = detect_and_translate(text)
+    
+    summary = summarizer(text, max_length=200, min_length=50, do_sample=False)[0]['summary_text']
 
-        # Handle YouTube URL
-        data = request.get_json()
-        youtube_url = data.get('youtube_url')
-        if youtube_url:
-            audio_path = download_youtube_video(youtube_url)
-            wav_path = convert_to_wav(audio_path)
-            transcript = audio_to_text_ibm(wav_path)
-            summary = summarize_text(transcript)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = text_splitter.split_text(text)
+    documents = [Document(page_content=chunk) for chunk in chunks]
 
-            os.remove(audio_path)  # Cleanup downloaded video
-            os.remove(wav_path)    # Cleanup converted audio
-            return jsonify({"summary": summary})
+    vector_store = FAISS.from_documents(documents, embedding_model)
+    vector_store.save_local("faiss_index")
 
-        return jsonify({"error": "No valid input provided"}), 400
+    return jsonify({"summary": summary})
 
-    except Exception as e:
-        app.logger.error(f"Error: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+@app.route('/chat', methods=['POST'])
+def chatbot():
+    global vector_store
+
+    if not vector_store:
+        return jsonify({"error": "No document has been uploaded yet!"}), 400
+
+    data = request.get_json()
+    question = data.get("question", "")
+    retriever = vector_store.as_retriever()
+    context = retriever.get_relevant_documents(question)
+    best_match = context[0].page_content if context else "I couldn't find relevant information."
+
+    return jsonify({"answer": best_match})
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(debug=True)
