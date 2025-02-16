@@ -1,141 +1,178 @@
-from flask import Flask, request, jsonify, render_template_string
-from transformers import pipeline
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.docstore.document import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-import fitz  # PyMuPDF
-import os
-import whisper
-from langdetect import detect
-from deep_translator import GoogleTranslator
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Summarizer & Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body class="bg-gray-100 font-sans leading-normal tracking-normal min-h-screen">
+    <!-- Loading Spinner -->
+    <div id="loading-spinner" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+    </div>
 
-app = Flask(__name__)
+    <!-- Header -->
+    <header class="bg-blue-600 text-white shadow-md">
+        <div class="container mx-auto py-6 px-4 text-center">
+            <h1 class="text-4xl font-bold">📄 Summarizer & Chatbot</h1>
+            <p class="text-lg mt-2">Upload a PDF/Video and interact with the content!</p>
+        </div>
+    </header>
 
-# Load models
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
-speech_model = whisper.load_model("base")
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vector_store = None  # Global variable to store document embeddings
+    <!-- Main Content -->
+    <main class="container mx-auto mt-10 px-4 pb-10">
+        <!-- File Upload -->
+        <div class="bg-white shadow-md rounded-lg p-8 max-w-2xl mx-auto">
+            <h2 class="text-2xl font-semibold text-gray-700 text-center">Upload a File</h2>
+            <form id="upload-form" class="mt-6 space-y-4">
+                <div class="space-y-2">
+                    <label class="block text-sm font-medium text-gray-700">Upload PDF/Video</label>
+                    <div class="relative">
+                        <input type="file" id="file" name="file" accept=".pdf, .mp4, .webm"
+                            class="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <p class="text-sm text-gray-500">Supported formats: PDF, MP4, WEBM</p>
+                </div>
+                <button type="submit" 
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg shadow-lg transition duration-200 ease-in-out transform hover:-translate-y-1">
+                    Process File
+                </button>
+            </form>
+        </div>
 
-def extract_text_from_pdf(pdf_path):
-    try:
-        doc = fitz.open(pdf_path)
-        text = "\n".join([page.get_text("text") for page in doc])
-        doc.close()  # Properly close the document
-        return text
-    except Exception as e:
-        raise Exception(f"Error processing PDF: {str(e)}")
+        <!-- Summary Result Section -->
+        <div id="result" class="mt-10 max-w-2xl mx-auto hidden">
+            <div class="bg-white shadow-md rounded-lg p-6">
+                <h3 class="text-xl font-semibold text-gray-700">Summary</h3>
+                <div id="summary-text" class="mt-4 bg-blue-50 p-4 rounded-lg text-gray-800 leading-relaxed"></div>
+            </div>
+        </div>
 
-def extract_text_from_video(video_path):
-    try:
-        result = speech_model.transcribe(video_path)
-        return result["text"]
-    except Exception as e:
-        raise Exception(f"Error processing video: {str(e)}")
+        <!-- Chatbot Section -->
+        <div id="chatbot-container" class="mt-10 max-w-2xl mx-auto hidden">
+            <div class="bg-white shadow-md rounded-lg p-6">
+                <h3 class="text-xl font-semibold text-gray-700 mb-4">Ask Questions About the File</h3>
+                <div id="chat-window" class="h-96 overflow-y-auto bg-gray-50 p-4 rounded-lg space-y-4"></div>
+                <div class="mt-4 flex gap-2">
+                    <input type="text" id="chat-input" 
+                        class="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                        placeholder="Type your question...">
+                    <button id="send-btn" 
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg shadow-lg transition duration-200 ease-in-out transform hover:-translate-y-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                        Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
 
-def detect_and_translate(text):
-    try:
-        lang = detect(text)
-        if lang != "en":
-            return GoogleTranslator(source=lang, target="en").translate(text)
-        return text
-    except Exception as e:
-        raise Exception(f"Error during translation: {str(e)}")
+    <script>
+        $(document).ready(function() {
+            const loadingSpinner = $("#loading-spinner");
+            const chatWindow = $("#chat-window");
+            const chatInput = $("#chat-input");
+            const sendBtn = $("#send-btn");
+            const uploadForm = $("#upload-form");
 
-def clean_text(text):
-    # Add basic text cleaning
-    return ' '.join(text.split())
+            function showLoading() {
+                loadingSpinner.removeClass('hidden');
+                sendBtn.prop('disabled', true);
+            }
 
-@app.route('/')
-def home():
-    # Use render_template_string since we have the HTML content
-    return render_template_string(HTML_CONTENT)  # HTML_CONTENT would be your index.html content
+            function hideLoading() {
+                loadingSpinner.addClass('hidden');
+                sendBtn.prop('disabled', false);
+            }
 
-@app.route('/process', methods=['POST'])
-def process_file():
-    global vector_store
-    
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-        
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-        
-    allowed_extensions = {'.pdf', '.mp4', '.webm'}
-    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-        return jsonify({"error": "Invalid file type"}), 400
+            function scrollChatToBottom() {
+                chatWindow.scrollTop(chatWindow[0].scrollHeight);
+            }
 
-    try:
-        # Create uploads directory if it doesn't exist
-        upload_dir = os.path.join(os.getcwd(), "uploads")
-        os.makedirs(upload_dir, exist_ok=True)
-        
-        file_path = os.path.join(upload_dir, file.filename)
-        file.save(file_path)
+            function appendMessage(message, isUser = false) {
+                const messageDiv = $('<div>').addClass('p-3 rounded-lg ' + 
+                    (isUser ? 'bg-blue-100 ml-auto max-w-[80%]' : 'bg-white max-w-[80%]'));
+                
+                const header = $('<div>').addClass('font-semibold mb-1').text(isUser ? 'You:' : 'Bot:');
+                const content = $('<div>').addClass('text-gray-700').text(message);
+                
+                messageDiv.append(header, content);
+                chatWindow.append(messageDiv);
+                scrollChatToBottom();
+            }
 
-        # Extract text based on file type
-        if file.filename.endswith(".pdf"):
-            text = extract_text_from_pdf(file_path)
-        else:
-            text = extract_text_from_video(file_path)
+            uploadForm.on("submit", function(e) {
+                e.preventDefault();
+                const fileInput = $("#file")[0];
+                
+                if (!fileInput.files[0]) {
+                    alert("Please select a file to upload.");
+                    return;
+                }
 
-        # Clean and translate text
-        text = clean_text(text)
-        text = detect_and_translate(text)
+                const formData = new FormData();
+                formData.append("file", fileInput.files[0]);
 
-        # Generate summary
-        summary = summarizer(text, max_length=200, min_length=50, do_sample=False)[0]['summary_text']
+                $("#result, #chatbot-container").hide();
+                $("#summary-text").empty();
+                chatWindow.empty();
 
-        # Create vector store
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50,
-            separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]
-        )
-        chunks = text_splitter.split_text(text)
-        documents = [Document(page_content=chunk) for chunk in chunks]
-        vector_store = FAISS.from_documents(documents, embedding_model)
-        
-        # Save vector store
-        os.makedirs("faiss_index", exist_ok=True)
-        vector_store.save_local("faiss_index")
+                showLoading();
 
-        # Clean up uploaded file
-        os.remove(file_path)
+                $.ajax({
+                    url: "/process",
+                    type: "POST",
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    success: function(response) {
+                        $("#result").show();
+                        $("#summary-text").text(response.summary);
+                        $("#chatbot-container").show();
+                        fileInput.value = '';
+                    },
+                    error: function(xhr) {
+                        const errorMsg = xhr.responseJSON?.error || "An error occurred while processing the file.";
+                        alert(errorMsg);
+                    },
+                    complete: hideLoading
+                });
+            });
 
-        return jsonify({"summary": summary})
+            chatInput.on('keypress', function(e) {
+                if (e.which === 13 && !e.shiftKey) {
+                    e.preventDefault();
+                    sendBtn.click();
+                }
+            });
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            sendBtn.click(function() {
+                const userQuestion = chatInput.val().trim();
+                
+                if (!userQuestion) return;
+                
+                appendMessage(userQuestion, true);
+                chatInput.val('').focus();
+                
+                showLoading();
 
-@app.route('/chat', methods=['POST'])
-def chatbot():
-    global vector_store
-    
-    if not vector_store:
-        return jsonify({"error": "No document has been processed yet"}), 400
-
-    try:
-        data = request.get_json()
-        if not data or "question" not in data:
-            return jsonify({"error": "No question provided"}), 400
-
-        question = data["question"]
-        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-        contexts = retriever.get_relevant_documents(question)
-        
-        if not contexts:
-            return jsonify({"answer": "I couldn't find relevant information in the document."}), 200
-
-        # Combine relevant contexts
-        combined_context = " ".join([doc.page_content for doc in contexts])
-        
-        return jsonify({"answer": combined_context})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(debug=True)
+                $.ajax({
+                    url: "/chat",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify({ question: userQuestion }),
+                    success: function(response) {
+                        appendMessage(response.answer);
+                    },
+                    error: function(xhr) {
+                        const errorMsg = xhr.responseJSON?.error || "An error occurred while processing your question.";
+                        alert(errorMsg);
+                    },
+                    complete: hideLoading
+                });
+            });
+        });
+    </script>
+</body>
+</html>
